@@ -1,0 +1,29 @@
+[workspace]
+root = "~/Workspace"
+nvim_config_dir = "~/Workspace/NvimConfig"
+review_root = "~/Workspace/reviews"
+
+[install]
+bin_dir = "~/.local/bin"
+claude_agents_dir = "~/.claude/agents"
+codex_agents_dir = "~/.codex/agents"
+claude_skills_dir = "~/.claude/skills"
+codex_skills_dir = "~/.agents/skills"
+tmuxp_dir = "~/.config/tmuxp"
+link_nvim = false
+
+[dev]
+enabled = true
+session_name = "dev"
+repo = "~/Workspace/example-project"
+
+[remote]
+enabled = false
+session_name = "remote-dev"
+host = "dev-host"
+project_root = "/home/user/project"
+agent = "remote-lab-helper"
+guest_command = "make vm-ssh"
+
+[overlays]
+paths = []

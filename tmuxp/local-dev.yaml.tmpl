@@ -1,0 +1,10 @@
+session_name: ${dev_session_name}
+
+windows:
+  - window_name: dev
+    start_directory: "${dev_repo}"
+    focus: true
+    panes:
+      - >-
+        printf '\033Ptmux;\033\033]1337;SetProfile=Nerd Font\007\033\\';
+        exec nvim -c 'Neotree filesystem reveal left' -c 'BottomTerminalToggle'

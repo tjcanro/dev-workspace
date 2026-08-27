@@ -1,0 +1,23 @@
+session_name: ${remote_session_name}
+
+windows:
+  - window_name: dev
+    start_directory: "~"
+    focus: true
+    panes:
+      - >-
+        printf '\033Ptmux;\033\033]1337;SetProfile=Nerd Font\007\033\\';
+        exec nvim -c 'RemoteSession ${remote_host}//${remote_project_root}'
+
+  - window_name: remote
+    layout: main-vertical
+    panes:
+      - >-
+        ssh -tt ${remote_host}
+        'cd ${remote_project_root} && exec claude --agent ${remote_agent}'
+      - >-
+        ssh -tt ${remote_host}
+        'cd ${remote_project_root} && exec $$SHELL -l'
+      - >-
+        ssh -tt ${remote_host}
+        'cd ${remote_project_root} && ${remote_guest_command}'

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${NVIM_CONFIG_REPO:-}" && -f "$NVIM_CONFIG_REPO/README.md" ]]; then
+  readme="$NVIM_CONFIG_REPO/README.md"
+elif [[ -f "$HOME/.config/nvim/README.md" ]]; then
+  readme="$HOME/.config/nvim/README.md"
+elif [[ -f "$HOME/Workspace/NvimConfig/README.md" ]]; then
+  readme="$HOME/Workspace/NvimConfig/README.md"
+else
+  printf '%s\n' 'neo-help: could not find the Neovim configuration README.' >&2
+  printf '%s\n' 'Set NVIM_CONFIG_REPO to the NvimConfig checkout.' >&2
+  exit 1
+fi
+
+exec nvim "$readme"

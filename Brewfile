@@ -1,0 +1,10 @@
+brew "fd"
+brew "gh"
+brew "glab"
+brew "jq"
+brew "neovim"
+brew "ripgrep"
+brew "tmux"
+brew "tmuxp"
+
+cask "font-jetbrains-mono-nerd-font"

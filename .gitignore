@@ -1,0 +1,6 @@
+profiles/local.toml
+private/
+.workbench/
+__pycache__/
+*.pyc
+.DS_Store

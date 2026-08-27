@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  review-pr <number|URL> [--repo PATH] [--prepare-only]
+  review-mr <number|URL> [--repo PATH] [--prepare-only]
+
+Creates or reuses an isolated review worktree under ~/Workspace/reviews (or
+CODE_REVIEW_ROOT), then opens a tmux session with:
+  - Neovim + Diffview + the reusable bottom terminal on the left
+  - Claude's read-only code-reviewer agent on the right
+
+When --repo is omitted, the current Git repository must have a remote for the
+requested provider. --prepare-only creates or refreshes the worktree without
+opening tmux.
+EOF
+}
+
+die() {
+  printf 'review: %s\n' "$*" >&2
+  exit 1
+}
+
+provider="${1:-}"
+case "$provider" in
+  github | gitlab) shift ;;
+  -h | --help | help | "")
+    usage
+    exit 0
+    ;;
+  *) die "internal provider must be github or gitlab" ;;
+esac
+
+selector=""
+repo_arg=""
+prepare_only=false
+
+while (($#)); do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --repo)
+      (($# >= 2)) || die "--repo requires a path"
+      repo_arg="$2"
+      shift 2
+      ;;
+    --prepare-only)
+      prepare_only=true
+      shift
+      ;;
+    --*) die "unknown option: $1" ;;
+    *)
+      [[ -z "$selector" ]] || die "only one PR or MR selector is allowed"
+      selector="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -n "$selector" ]] || {
+  usage >&2
+  exit 2
+}
+
+for command_name in git jq; do
+  command -v "$command_name" >/dev/null 2>&1 || die "missing command: $command_name"
+done
+
+if [[ "$prepare_only" == false ]]; then
+  for command_name in tmux nvim claude; do
+    command -v "$command_name" >/dev/null 2>&1 || die "missing command: $command_name"
+  done
+fi
+
+if [[ "$provider" == github ]]; then
+  command -v gh >/dev/null 2>&1 || die "missing command: gh"
+  remote_pattern='github.com'
+else
+  command -v glab >/dev/null 2>&1 || die "missing command: glab"
+  remote_pattern='gitlab'
+fi
+
+repo_has_provider_remote() {
+  local candidate="$1"
+  local remote_name remote_url
+
+  git -C "$candidate" rev-parse --show-toplevel >/dev/null 2>&1 || return 1
+  while IFS= read -r remote_name; do
+    remote_url="$(git -C "$candidate" remote get-url "$remote_name" 2>/dev/null || true)"
+    [[ "$remote_url" == *"$remote_pattern"* ]] && return 0
+  done < <(git -C "$candidate" remote)
+  return 1
+}
+
+if [[ -n "$repo_arg" ]]; then
+  repo_candidate="$repo_arg"
+elif repo_has_provider_remote "$PWD"; then
+  repo_candidate="$PWD"
+else
+  die "current directory has no $provider remote; pass --repo PATH"
+fi
+
+repo_root="$(git -C "$repo_candidate" rev-parse --show-toplevel 2>/dev/null)" || \
+  die "not a Git repository: $repo_candidate"
+repo_has_provider_remote "$repo_root" || \
+  die "repository has no $provider remote: $repo_root"
+
+select_remote() {
+  local preferred="$1"
+  local remote_name remote_url
+  local -a candidates=()
+
+  git -C "$repo_root" remote get-url "$preferred" >/dev/null 2>&1 && candidates+=("$preferred")
+  while IFS= read -r remote_name; do
+    [[ "$remote_name" == "$preferred" ]] || candidates+=("$remote_name")
+  done < <(git -C "$repo_root" remote)
+
+  for remote_name in "${candidates[@]}"; do
+    remote_url="$(git -C "$repo_root" remote get-url "$remote_name")"
+    if [[ "$remote_url" == *"$remote_pattern"* ]]; then
+      printf '%s\n' "$remote_name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ "$provider" == github ]]; then
+  remote_name="$(select_remote upstream)" || die "could not select a GitHub remote"
+else
+  remote_name="$(select_remote origin)" || die "could not select a GitLab remote"
+fi
+remote_url="$(git -C "$repo_root" remote get-url "$remote_name")"
+repo_name="$(basename "$repo_root")"
+
+attach_review_session() {
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$session"
+  else
+    exec tmux attach-session -t "$session"
+  fi
+}
+
+if [[ "$provider" == github ]]; then
+  github_slug="$remote_url"
+  github_slug="${github_slug#git@github.com:}"
+  github_slug="${github_slug#ssh://git@github.com/}"
+  github_slug="${github_slug#https://github.com/}"
+  github_slug="${github_slug#http://github.com/}"
+  github_slug="${github_slug%.git}"
+  [[ "$github_slug" == */* ]] || die "cannot derive GitHub repository from $remote_url"
+
+  metadata="$(gh pr view "$selector" -R "$github_slug" \
+    --json number,title,url,baseRefName,headRefOid)" || \
+    die "could not read GitHub PR $selector from $github_slug"
+  review_id="$(jq -r '.number' <<<"$metadata")"
+  review_title="$(jq -r '.title' <<<"$metadata")"
+  review_url="$(jq -r '.url' <<<"$metadata")"
+  base_branch="$(jq -r '.baseRefName' <<<"$metadata")"
+  expected_head="$(jq -r '.headRefOid' <<<"$metadata")"
+  review_ref="refs/reviews/github/${github_slug//\//-}/pr-$review_id"
+  review_kind="pr"
+  head_source="refs/pull/$review_id/head"
+  review_label="GitHub PR #$review_id"
+else
+  metadata="$(glab mr view "$selector" -R "$remote_url" -F json)" || \
+    die "could not read GitLab MR $selector from $remote_url"
+  review_id="$(jq -r '.iid' <<<"$metadata")"
+  review_title="$(jq -r '.title' <<<"$metadata")"
+  review_url="$(jq -r '.web_url' <<<"$metadata")"
+  base_branch="$(jq -r '.target_branch' <<<"$metadata")"
+  expected_head="$(jq -r '.sha' <<<"$metadata")"
+  review_ref="refs/reviews/gitlab/mr-$review_id"
+  review_kind="mr"
+  head_source="refs/merge-requests/$review_id/head"
+  review_label="GitLab MR !$review_id"
+fi
+
+review_root="${CODE_REVIEW_ROOT:-$HOME/Workspace/reviews}"
+worktree="$review_root/$repo_name-$review_kind-$review_id"
+base_ref="$remote_name/$base_branch"
+session="review-$repo_name-$review_kind-$review_id"
+session="${session//[^A-Za-z0-9_.-]/-}"
+
+if [[ "$prepare_only" == false ]] && tmux has-session -t "=$session" 2>/dev/null; then
+  printf 'Reusing active tmux session without changing its checkout: %s\n' "$session"
+  attach_review_session
+fi
+
+printf 'Fetching %s and %s/%s...\n' "$review_label" "$remote_name" "$base_branch"
+git -C "$repo_root" fetch --no-tags "$remote_name" \
+  "+$head_source:$review_ref" \
+  "+refs/heads/$base_branch:refs/remotes/$remote_name/$base_branch"
+
+actual_head="$(git -C "$repo_root" rev-parse "$review_ref")"
+[[ "$actual_head" == "$expected_head" ]] || \
+  die "fetched review head $actual_head does not match provider head $expected_head"
+
+mkdir -p "$review_root"
+
+if [[ -e "$worktree" ]]; then
+  git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || \
+    die "review path exists but is not a Git worktree: $worktree"
+
+  if ! git -C "$worktree" diff --quiet || ! git -C "$worktree" diff --cached --quiet; then
+    die "review worktree has tracked changes; resolve them before refreshing: $worktree"
+  fi
+
+  git -C "$worktree" switch --detach "$review_ref"
+else
+  git -C "$repo_root" worktree add --detach "$worktree" "$review_ref"
+fi
+
+printf '\n%s\n%s\nReview range: %s...HEAD\nWorktree: %s\n' \
+  "$review_title" "$review_url" "$base_ref" "$worktree"
+
+if [[ "$prepare_only" == true ]]; then
+  exit 0
+fi
+
+if tmux has-session -t "=$session" 2>/dev/null; then
+  printf 'Reusing tmux session: %s\n' "$session"
+else
+  printf -v nvim_command '%q -c %q -c %q' \
+    "$(command -v nvim)" "DiffviewOpen $base_ref...HEAD" "BottomTerminalToggle"
+  reviewer_prompt="Review $base_ref...HEAD for $review_url. This is an isolated review worktree. Begin the review now and follow the code-reviewer findings format."
+  printf -v agent_command '%q --agent code-reviewer --name %q %q' \
+    "$(command -v claude)" "$session-agent" "$reviewer_prompt"
+
+  tmux new-session -d -s "$session" -n review -c "$worktree" "$nvim_command"
+  tmux split-window -h -p 35 -t "$session:review" -c "$worktree" "$agent_command"
+  tmux select-pane -t "$session:review.0"
+fi
+
+attach_review_session
