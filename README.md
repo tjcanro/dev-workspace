@@ -62,7 +62,14 @@ neo-help
 `review-pr` uses GitHub CLI; `review-mr` uses GitLab CLI. Both fetch the review
 head into an isolated worktree under `~/Workspace/reviews` by default, open
 Diffview in Neovim, and start Claude's read-only `code-reviewer` agent beside
-the editor.
+the editor. New reviewer sessions use Claude's `opus` model alias
+with extra-high (`xhigh`) effort. Reports include findings and evidence gaps,
+then a change summary and a Mermaid diagram of the implementation with verified
+code references.
+
+Rerunning either command preserves an active review checkout and restores a
+missing or exited reviewer pane. Agent startup failures stay visible in the
+pane; resolve the displayed error and rerun the command to restart the agent.
 
 ## Agents and private overlays
 
@@ -89,6 +96,17 @@ paths = ["~/Workspace/private-workspace"]
 The installer discovers roles and skills from the public repository and every
 configured overlay. Skills are installed into both Claude's and Codex's user
 skill directories. Private overlays are never copied into this repository.
+
+A skill that already lives in its own canonical repository can be registered
+without copying it into an overlay:
+
+```toml
+[skills]
+paths = ["~/Workspace/example-skill"]
+```
+
+Each path must contain a top-level `SKILL.md`. The installer uses the skill name
+from that file and links the same source into both agent harnesses.
 
 See [Agent architecture](docs/agents.md), [tmux and tmuxp](docs/tmux.md), and
 [security and sharing](docs/security.md) for the design boundaries.

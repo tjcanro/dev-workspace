@@ -143,6 +143,39 @@ attach_review_session() {
   else
     exec tmux attach-session -t "$session"
   fi
+  exit 0
+}
+
+ensure_reviewer_pane() {
+  local editor_pane agent_pane="" pane_id pane_command pane_role pane_dead
+  editor_pane="$(tmux list-panes -t "$session:review" -F '#{pane_id}' | head -n 1)"
+
+  # Recognize panes created before we started storing their role, too.
+  while IFS='|' read -r pane_id pane_command pane_role; do
+    if [[ "$pane_role" == reviewer || "$pane_command" == *"--agent code-reviewer"* ]]; then
+      agent_pane="$pane_id"
+      break
+    fi
+  done < <(tmux list-panes -t "$session:review" \
+    -F '#{pane_id}|#{pane_start_command}|#{@review-role}')
+
+  if [[ -z "$agent_pane" ]]; then
+    # Create an idle pane first so failure retention is set before Claude starts.
+    agent_pane="$(tmux split-window -h -p 35 -d -P -F '#{pane_id}' \
+      -t "$editor_pane" -c "$worktree")"
+    tmux set-option -p -t "$agent_pane" @review-role reviewer
+    tmux set-option -p -t "$agent_pane" remain-on-exit on
+    tmux respawn-pane -k -t "$agent_pane" -c "$worktree" "$agent_command"
+  else
+    tmux set-option -p -t "$agent_pane" @review-role reviewer
+    tmux set-option -p -t "$agent_pane" remain-on-exit on
+    pane_dead="$(tmux display-message -p -t "$agent_pane" '#{pane_dead}')"
+    if [[ "$pane_dead" == 1 ]]; then
+      printf 'Restarting exited reviewer pane in %s...\n' "$session"
+      tmux respawn-pane -t "$agent_pane" -c "$worktree" "$agent_command"
+    fi
+  fi
+  tmux select-pane -t "$editor_pane"
 }
 
 if [[ "$provider" == github ]]; then
@@ -186,8 +219,15 @@ base_ref="$remote_name/$base_branch"
 session="review-$repo_name-$review_kind-$review_id"
 session="${session//[^A-Za-z0-9_.-]/-}"
 
+if [[ "$prepare_only" == false ]]; then
+  reviewer_prompt="Review $base_ref...HEAD for $review_url. This is an isolated review worktree. Begin the review now and follow the code-reviewer findings format, including possible correctness gaps and testing or evidence gaps. After the findings, summarize the change's purpose and before/after behavior, and include a Mermaid flow diagram explaining its inner workings. Follow the code-reviewer summary instructions for concise code excerpts and verified implementation references."
+  printf -v agent_command '%q --agent code-reviewer --model opus --effort xhigh --name %q %q' \
+    "$(command -v claude)" "$session-agent" "$reviewer_prompt"
+fi
+
 if [[ "$prepare_only" == false ]] && tmux has-session -t "=$session" 2>/dev/null; then
   printf 'Reusing active tmux session without changing its checkout: %s\n' "$session"
+  ensure_reviewer_pane
   attach_review_session
 fi
 
@@ -227,13 +267,8 @@ if tmux has-session -t "=$session" 2>/dev/null; then
 else
   printf -v nvim_command '%q -c %q -c %q' \
     "$(command -v nvim)" "DiffviewOpen $base_ref...HEAD" "BottomTerminalToggle"
-  reviewer_prompt="Review $base_ref...HEAD for $review_url. This is an isolated review worktree. Begin the review now and follow the code-reviewer findings format."
-  printf -v agent_command '%q --agent code-reviewer --name %q %q' \
-    "$(command -v claude)" "$session-agent" "$reviewer_prompt"
-
   tmux new-session -d -s "$session" -n review -c "$worktree" "$nvim_command"
-  tmux split-window -h -p 35 -t "$session:review" -c "$worktree" "$agent_command"
-  tmux select-pane -t "$session:review.0"
 fi
 
+ensure_reviewer_pane
 attach_review_session

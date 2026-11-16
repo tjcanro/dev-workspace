@@ -60,6 +60,16 @@ def profile_roots(profile: dict) -> list[Path]:
     return roots
 
 
+def profile_skill_paths(profile: dict) -> list[Path]:
+    paths: list[Path] = []
+    for raw_path in profile.get("skills", {}).get("paths", []):
+        path = expand_path(raw_path)
+        if not (path / "SKILL.md").is_file():
+            raise WorkbenchError(f"external skill is missing SKILL.md: {path}")
+        paths.append(path)
+    return paths
+
+
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -113,23 +123,26 @@ def discover_roles(roots: list[Path]) -> dict[str, Path]:
     return roles
 
 
-def discover_skills(roots: list[Path]) -> dict[str, Path]:
+def discover_skills(roots: list[Path], external_paths: list[Path] | None = None) -> dict[str, Path]:
     skills: dict[str, Path] = {}
+    directories: list[Path] = []
     for root in roots:
         skill_root = root / "skills"
-        if not skill_root.is_dir():
-            continue
-        for directory in sorted(path for path in skill_root.iterdir() if path.is_dir()):
-            entrypoint = directory / "SKILL.md"
-            if not entrypoint.is_file():
-                raise WorkbenchError(f"skill is missing SKILL.md: {directory}")
-            metadata, _ = parse_frontmatter(entrypoint)
-            name = metadata.get("name", "")
-            if not name:
-                raise WorkbenchError(f"skill has no name: {entrypoint}")
-            if name in skills:
-                raise WorkbenchError(f"duplicate skill {name}: {skills[name]} and {directory}")
-            skills[name] = directory
+        if skill_root.is_dir():
+            directories.extend(sorted(path for path in skill_root.iterdir() if path.is_dir()))
+    directories.extend(external_paths or [])
+
+    for directory in directories:
+        entrypoint = directory / "SKILL.md"
+        if not entrypoint.is_file():
+            raise WorkbenchError(f"skill is missing SKILL.md: {directory}")
+        metadata, _ = parse_frontmatter(entrypoint)
+        name = metadata.get("name", "")
+        if not name:
+            raise WorkbenchError(f"skill has no name: {entrypoint}")
+        if name in skills:
+            raise WorkbenchError(f"duplicate skill {name}: {skills[name]} and {directory}")
+        skills[name] = directory
     return skills
 
 
@@ -237,8 +250,9 @@ def validate(profile_path: Path | None = None) -> None:
     manifest = load_toml(ROOT / "workbench.toml")
     profile = load_toml(profile_path or EXAMPLE_PROFILE)
     roots = profile_roots(profile) if profile_path else [ROOT]
+    external_skills = profile_skill_paths(profile) if profile_path else []
     roles = discover_roles(roots)
-    skills = discover_skills(roots)
+    skills = discover_skills(roots, external_skills)
 
     for name, path in roles.items():
         if not NAME_RE.fullmatch(name):
@@ -253,7 +267,7 @@ def validate(profile_path: Path | None = None) -> None:
     for name, directory in skills.items():
         if not NAME_RE.fullmatch(name):
             raise WorkbenchError(f"invalid skill name {name!r}: {directory}")
-        if directory.name != name:
+        if directory.name != name and directory not in external_skills:
             raise WorkbenchError(f"skill folder must match name {name}: {directory}")
         metadata, body = parse_frontmatter(directory / "SKILL.md")
         if not metadata.get("description") or not body.strip():
@@ -305,6 +319,7 @@ def install(profile_path: Path, dry_run: bool) -> None:
     profile = load_toml(profile_path)
     manifest = load_toml(ROOT / "workbench.toml")
     roots = profile_roots(profile)
+    external_skills = profile_skill_paths(profile)
 
     bin_dir = expand_path(profile["install"]["bin_dir"])
     for command in manifest["install"]["commands"]:
@@ -324,7 +339,7 @@ def install(profile_path: Path, dry_run: bool) -> None:
 
     claude_skills_dir = expand_path(profile["install"]["claude_skills_dir"])
     codex_skills_dir = expand_path(profile["install"]["codex_skills_dir"])
-    for name, skill_dir in discover_skills(roots).items():
+    for name, skill_dir in discover_skills(roots, external_skills).items():
         ensure_symlink(skill_dir, claude_skills_dir / name, dry_run)
         ensure_symlink(skill_dir, codex_skills_dir / name, dry_run)
 
@@ -360,7 +375,7 @@ def doctor(profile_path: Path) -> None:
     print(f"{'ok' if (nvim_dir / 'README.md').is_file() else 'missing':7} Neovim config {nvim_dir}")
     try:
         roles = discover_roles(profile_roots(profile))
-        skills = discover_skills(profile_roots(profile))
+        skills = discover_skills(profile_roots(profile), profile_skill_paths(profile))
         print(f"ok      {len(roles)} agent roles, {len(skills)} skills discoverable")
     except WorkbenchError as exc:
         failures += 1
@@ -445,7 +460,7 @@ def sync_remote(profile_path: Path, host: str, dry_run: bool) -> None:
     profile = load_toml(profile_path)
     roots = profile_roots(profile)
     roles = discover_roles(roots)
-    skills = discover_skills(roots)
+    skills = discover_skills(roots, profile_skill_paths(profile))
     if dry_run:
         for name, path in roles.items():
             print(f"sync    {path} -> {host}:~/.claude/agents/{name}.md")

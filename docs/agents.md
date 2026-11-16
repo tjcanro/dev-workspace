@@ -11,7 +11,7 @@ Use four distinct kinds of information:
 | --- | --- | --- |
 | Role and safety boundary | `agents/roles/` | Versioned |
 | Reusable procedure | `skills/` | Versioned |
-| Stable domain knowledge | Private overlay | Versioned privately |
+| Stable domain knowledge | Private overlay or external skill repository | Versioned at its source |
 | Current handoff and conversation state | User state directory | Never versioned |
 
 Create a role with:
@@ -30,3 +30,7 @@ rules, sources, and completion criteria for that specialist. Run
 Private overlays use the same layout and are listed in the local profile. This
 keeps public tooling and private operational context separate without creating
 a second installer.
+
+Canonical skill repositories with a top-level `SKILL.md` can instead be listed
+under `[skills].paths` in the local profile. They remain independently
+versioned while `workbench install` links them into both Claude and Codex.

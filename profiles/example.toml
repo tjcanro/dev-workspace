@@ -27,3 +27,7 @@ guest_command = "make vm-ssh"
 
 [overlays]
 paths = []
+
+[skills]
+# Canonical skill repositories that already contain a top-level SKILL.md.
+paths = []

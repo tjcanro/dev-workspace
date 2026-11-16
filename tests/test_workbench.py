@@ -40,6 +40,24 @@ class WorkbenchTests(unittest.TestCase):
         profile = WORKBENCH["load_toml"](ROOT / "profiles" / "example.toml")
         self.assertFalse(profile["remote"]["enabled"])
 
+    def test_external_skill_uses_frontmatter_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            external = Path(directory) / "knowledge-repository"
+            external.mkdir()
+            (external / "SKILL.md").write_text(
+                "---\n"
+                "name: rust-skills\n"
+                "description: Apply Rust knowledge.\n"
+                "---\n\n"
+                "# Rust skills\n\n"
+                "Use the repository knowledge.\n",
+                encoding="utf-8",
+            )
+
+            skills = WORKBENCH["discover_skills"]([ROOT], [external])
+
+            self.assertEqual(skills["rust-skills"], external)
+
     def test_agent_scaffold_creates_a_valid_role_and_skill(self):
         function_globals = WORKBENCH["new_agent"].__globals__
         original_root = function_globals["ROOT"]
