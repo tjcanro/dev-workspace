@@ -24,6 +24,16 @@ host = "dev-host"
 project_root = "/home/user/project"
 agent = "remote-lab-helper"
 guest_command = "make vm-ssh"
+# Native editing uses an already installed remote editor.
+editor_command = "nvim"
+# Relative to the remote home; used by remote sync-nvim.
+nvim_config_dir = "Workspace/NvimConfig"
+# Optional: replace the default claude --agent command with any agent CLI.
+# agent_command = "claude --continue"
+
+[ssh]
+control_dir = "~/.ssh/workbench"
+control_persist = "15m"
 
 [overlays]
 paths = []

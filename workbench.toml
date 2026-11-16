@@ -4,7 +4,7 @@ version = 1
 name = "dev-workspace"
 
 [dependencies]
-required_commands = ["git", "nvim", "tmux", "tmuxp", "rg", "jq", "claude"]
+required_commands = ["git", "nvim", "tmux", "tmuxp", "rg", "jq", "claude", "ssh", "rsync"]
 optional_commands = ["codex", "fd", "gh", "glab", "shellcheck"]
 
 [nvim]

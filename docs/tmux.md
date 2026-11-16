@@ -19,3 +19,9 @@ After installation:
 tmux source-file ~/.config/tmux/dev-workspace-common.conf
 tmuxp load ~/.config/tmuxp/local-dev.yaml
 ```
+
+For persistent remote processes, use `workbench remote ensure host agent` and
+`workbench remote attach host` (or `agent` / `guest`). These create named tmux
+sessions on the remote host. The original tmuxp template opens direct SSH
+processes; it does not itself create persistent remote sessions. See
+[Remote development](remote-development.md) for profile configuration.
